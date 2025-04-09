@@ -1,7 +1,22 @@
-import random
+import { Component, OnInit } from '@angular/core';
 
-def generar_codigo(longitud=6):
-    return ''.join(str(random.randint(0, 9)) for _ in range(longitud))
+@Component({
+  selector: 'app-root',
+  templateUrl: './app.component.html',
+  styleUrls: ['./app.component.scss']
+})
+export class AppComponent implements OnInit {
+  title = 'sorba-iot-unified';
 
-codigo = generar_codigo()
-print(f"Código generado: {codigo}")
+  constructor() { }
+
+  ngOnInit(): void {
+  }
+
+  ngOnDestroy(): void {
+  }
+
+  onClick(): void {
+    console.log('click');
+  }
+}
