@@ -8,3 +8,5 @@
 print("Azuca prieta mami!")
 print("Arraca arraca")
 print("La cucaracha")
+print("now remember this!")
+print("she cant walk!")
