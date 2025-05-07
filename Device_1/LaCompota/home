@@ -1,0 +1,172 @@
+import streamlit as st
+import plotly.express as px
+import time
+from sorba_sdk.core.data_sdk.data_sdk import SorbaData
+from sorba_sdk.core.auth_sdk.app_authenticator import AppAuthenticator
+
+# Set page configuration
+namespace = "ScadaDashboard" # Used to identify our app across other sorba services and apis
+layout = "wide"
+refresh_time = 1  # Cycle time in seconds to refresh our data
+st.set_page_config(page_title="SCADA Dashboard", layout=layout)
+
+# Save the sorba_data instance in the Streamlit session state.
+# The SorbaData object helps us read and write real-time and historical data. It may store some tag metadata 
+# in memory, so we need to save it in Streamlit's session state to avoid making continuous queries to the Sorba APIs.
+if "sorba_data" not in st.session_state:
+    st.session_state.sorba_data = SorbaData(namespace)
+
+# Save the app_authenticator instance in the Streamlit session state.
+# The AppAuthenticator object helps us authenticate users with the Sorba Identity service, so app users
+# can access this app only if they are authenticated. If you omit this step, all users will be able to access this app
+# causing a security risk.
+if "app_authenticator" not in st.session_state:
+    st.session_state.app_authenticator = AppAuthenticator(namespace)
+
+# Only show the page content if the user is authenticated, otherwise show the login page
+if not st.session_state.app_authenticator.authenticated:
+    st.session_state.app_authenticator.login_page(layout=layout)
+else:
+
+    # Include a header with the user's full name and a log out button
+    headers = st.columns(5)
+    with headers[3]:
+        st.write(f"Hello, {st.session_state.app_authenticator.user_full_name}!")
+    with headers[4]:
+        if st.button("Log out", type="primary"):
+            st.session_state.app_authenticator.logout()
+
+    # Defining Set Point tags
+    # These tags are the set points and must also be present in the tree. Here we read their real time values
+    # to be showed as dashed lines in historical views. We also use them to write those values the user inputs
+    # in the side bar.
+    # Optionally, @DEVICE and @ASSET wildcards can be used to reference the current device and asset
+    # the app node is running on. If the app is a device global app, @ASSET will be an empty string.
+    # These wildcards allow you to clone or move an app to another device or asset while keeping the same code,
+    # anytime those scopes has the same tags referenced here. This should work fine even if some apps are inside
+    # assets that belongs to asset groups.
+    set_point_tags = [
+        "@DEVICE.@ASSET.SetPoints.Temperature",
+        "@DEVICE.@ASSET.SetPoints.Pressure",
+        "@DEVICE.@ASSET.SetPoints.Flow",
+    ]
+
+    # Title and description
+    st.title("SCADA-Like Dashboard")
+    st.write("A simulated SCADA dashboard where you can enter parameters and monitor system data in real-time.")
+
+    # Get initial set point values from sorba to initialize input widgets
+    temp_sp_val, press_sp_val, flow_sp_val = st.session_state.sorba_data.rt_read(tags=set_point_tags)
+
+    # Sidebar for input parameters
+    # Here we colelct some values from the user to be used in our app.
+    st.sidebar.header("Control Panel")
+    temperature_setpoint = st.sidebar.slider("Temperature Setpoint (°C)", min_value=20.0, max_value=100.0, value=temp_sp_val, step=1.0)
+    pressure_setpoint = st.sidebar.slider("Pressure Setpoint (kPa)", min_value=50.0, max_value=500.0, value=press_sp_val, step=10.0)
+    flow_rate_setpoint = st.sidebar.number_input("Flow Rate Setpoint (L/min)", min_value=10.0, max_value=500.0, value=flow_sp_val, step=10.0)
+
+    st.sidebar.write("Display Settings")
+    # We let the user define the amount of historical data he wants to plot
+    hist_len = int(st.sidebar.slider("Display History Lenght (Seconds)", min_value=10, max_value=600, value=60, step=1))
+
+    # Save sorba_data instance in session state
+    # The SorbaData object will help us to read/write real time and historical data. It may keep some tags
+    # metadata in memory, so we need to put it in streamlit session state to avoid continuous queries to sorba apis
+    # Optionally, @DEVICE and @ASSET wildcards can be used to reference the current device and asset
+    # the app node is running on. If the app is a device global app, @ASSET will be an empty string.
+    # These wildcards allow you to clone or move an app to another device or asset while keeping the same code,
+    # anytime those scopes has the same tags referenced here. This should work fine even if some apps are inside
+    # assets that belongs to asset groups.
+    sensor_tags = [
+        "@DEVICE.@ASSET.Sensors.Temperature",
+        "@DEVICE.@ASSET.Sensors.Pressure",
+        "@DEVICE.@ASSET.Sensors.Flow",
+    ]
+
+    # ------------------------------ Writing Setpoints ------------------------------------------
+    # To write input values to sorba tags, we use the rt_write method and provide a dictionary
+    # with tag names and their corresponding values
+    st.session_state.sorba_data.rt_write(
+        data={
+            set_point_tags[0]: temperature_setpoint,
+            set_point_tags[1]: pressure_setpoint,
+            set_point_tags[2]: flow_rate_setpoint,
+        }
+    )
+
+    @st.experimental_fragment(run_every=refresh_time)  # This decorator allows us to refresh the section periodically
+    def monitoring():
+        # ------------------------------ Real Time Monitoring Secction ------------------------------------------
+        # Reading Real Time Data and actual set point values
+        # To read real_time data, we use the rt_read method and we just provide a list with desired tags
+        # the result is a list with the corresponding values in the same order
+        rt_data = st.session_state.sorba_data.rt_read(tags=sensor_tags + set_point_tags)
+
+        # First we show an overview with real time values and their deltas.
+        # To calculate deltas we save previous values in session_state
+        st.header("System Overview")
+        col1, col2, col3 = st.columns(3)
+        tempeture, pressure, flow, actual_sp_tempeture, actual_sp_pressure, actual_sp_flow = rt_data
+
+        if None in [tempeture, pressure, flow, actual_sp_tempeture, actual_sp_pressure, actual_sp_flow]:
+            st.warning("No data available. Possible reasons: Some tags you are referencing do not exist or "
+                       "don't have real time data.")
+            return
+
+        # Calculating deltas based on last measurement if exists
+        if "prev_rt_data" in st.session_state:
+            prev_tempeture, prev_pressure, prev_flow = st.session_state.prev_rt_data
+            delta_tempeture = tempeture - prev_tempeture
+            delta_pressure = pressure - prev_pressure
+            delta_flow = flow - prev_flow
+        else:
+            delta_tempeture, delta_pressure, delta_flow = 0, 0, 0
+        st.session_state.prev_rt_data = [tempeture, pressure, flow]
+
+        # Displaying real time data
+        col1.metric("Temperature", "{:.2f} °F".format(tempeture), delta="{:.2f} °F".format(delta_tempeture))
+        col2.metric("Pressure", "{:.2f} kPa".format(pressure), delta="{:.2f} kPa".format(delta_pressure))
+        col3.metric("Flow Rate", "{:.2f} L/min".format(flow), delta="{:.2f} L/min".format(delta_flow))
+
+        # ------------------------------ Historical Secction ------------------------------------------
+        # Reading Historical Data
+        # To read historical data we also provide the tags we want to read.
+        # We also provide a start and end times in milliseconds.
+        # We set as_df=True to get a pandas DataFrame (a dict will be returned otherwise)
+        # Se set as_timestamps=True to get index column as Timestamp objects (unix timestamps will be obtained otherwise)
+        now = int(time.time() * 1000)
+        hist_data = st.session_state.sorba_data.hist_read(
+            tags=sensor_tags,
+            start_time_ms=now - hist_len * 1000,
+            end_time_ms=now,
+            as_df=True,
+            as_timestamp=True
+        )
+
+        # Real-time trend charts
+        st.header("Real-Time System Trends")
+        if len(hist_data) == 0: # Verifying there is some data in our dataframe
+            st.write("No history data in this range")
+        else:
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                fig = px.line(hist_data, x=hist_data.index, y=hist_data.columns[0], title="Temperature Over Time")
+                fig.add_hline(y=actual_sp_tempeture, line_dash="dash", annotation_text="Setpoint")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                fig = px.line(hist_data, x=hist_data.index, y=hist_data.columns[1], title="Pressure Over Time")
+                fig.add_hline(y=actual_sp_pressure, line_dash="dash", annotation_text="Setpoint")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col3:
+                fig = px.line(hist_data, x=hist_data.index, y=hist_data.columns[2], title="Flow Rate Over Time")
+                fig.add_hline(y=actual_sp_flow, line_dash="dash", annotation_text="Setpoint")
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Data Table
+            st.header("Raw Data Table")
+            st.dataframe(hist_data.tail(5))
+
+    monitoring()
