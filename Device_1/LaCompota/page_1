@@ -1,0 +1,34 @@
+import streamlit as st
+from sorba_sdk.core.auth_sdk.app_authenticator import AppAuthenticator
+
+# Set page configuration
+namespace = "ScratchPage"  # Recommended to be the same as the app name
+layout = "wide"
+
+# Page title and layout
+st.set_page_config(page_title=namespace, layout=layout)
+
+# Save the app_authenticator instance in the Streamlit session state.
+# The AppAuthenticator object helps us authenticate users with the Sorba Identity service, so app users
+# can access this app only if they are authenticated. If you omit this step, all users will be able to access this app
+# causing a security risk.
+# IMPORTANT: For multi-pages apps, you need to define the login in each page
+if "app_authenticator" not in st.session_state:
+    st.session_state.app_authenticator = AppAuthenticator(namespace)
+
+# Only show the page content if the user is authenticated, otherwise show the login page
+if not st.session_state.app_authenticator.authenticated:
+    st.session_state.app_authenticator.login_page(layout=layout)
+else:
+
+    # Include a header with the user's full name and a log out button
+    headers = st.columns(5)
+    with headers[3]:
+        st.write(f"Hello, {st.session_state.app_authenticator.user_full_name}!")
+    with headers[4]:
+        if st.button("Log out", type="primary"):
+            st.session_state.app_authenticator.logout()
+
+    # Page content goes here
+    st.title("Scratch Page")
+    st.write("This is a scratch page")
