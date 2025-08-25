@@ -5,3 +5,5 @@ def generar_codigo(longitud=6):
 
 codigo = generar_codigo()
 print(f"Código generado: {codigo}")
+
+# any comment
